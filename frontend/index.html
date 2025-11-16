@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat en Tiempo Real</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Panel Lateral -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>💬 Chat</h1>
+                <p class="subtitle">Tiempo Real</p>
+            </div>
+
+            <div class="user-section">
+                <input 
+                    type="text" 
+                    id="usernameInput" 
+                    placeholder="Tu nombre de usuario"
+                    class="username-input"
+                    maxlength="30"
+                >
+                <button id="joinBtn" class="join-btn">Conectar</button>
+            </div>
+
+            <div class="rooms-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <h3 style="margin: 0;">Salas de Chat</h3>
+                    <button id="createRoomBtn" class="create-room-btn" title="Crear sala">+</button>
+                </div>
+                <div id="roomsList" class="rooms-list">
+                    <div class="room-item loading">Cargando salas...</div>
+                </div>
+            </div>
+
+            <div class="users-section">
+                <h3>Usuarios Conectados</h3>
+                <div id="usersList" class="users-list">
+                    <p class="empty-state">Conectate para ver usuarios</p>
+                </div>
+            </div>
+
+            <div class="info-section">
+                <p class="info-text">🟢 Estado: <span id="status">Desconectado</span></p>
+                <button id="disconnectBtn" class="disconnect-btn" style="display: none;">Desconectar</button>
+            </div>
+        </aside>
+
+        <!-- Área Principal de Chat -->
+        <main class="chat-container">
+            <div class="chat-header">
+                <div class="header-content">
+                    <h2 id="roomTitle">Selecciona una sala</h2>
+                    <p id="roomDesc" class="room-description">Elige una sala para comenzar a chatear</p>
+                </div>
+                <div class="header-actions">
+                    <span id="userCount" class="user-count">0 usuarios</span>
+                </div>
+            </div>
+
+            <div id="messagesContainer" class="messages-container">
+                <div class="welcome-message">
+                    <div class="welcome-icon">👋</div>
+                    <h3>Bienvenido al Chat en Tiempo Real</h3>
+                    <p>Selecciona una sala y comienza a chatear con otros usuarios</p>
+                </div>
+            </div>
+
+            <div class="typing-indicator" id="typingIndicator" style="display: none;">
+                <span></span><span></span><span></span>
+                <p id="typingUser"></p>
+            </div>
+
+            <div class="chat-input-area">
+                <input 
+                    type="text" 
+                    id="messageInput" 
+                    placeholder="Escribe un mensaje..." 
+                    class="message-input"
+                    disabled
+                >
+                <button id="sendBtn" class="send-btn" disabled>
+                    <span>Enviar</span>
+                </button>
+            </div>
+        </main>
+    </div>
+
+    <!-- Notificaciones -->
+    <div id="notification" class="notification"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>

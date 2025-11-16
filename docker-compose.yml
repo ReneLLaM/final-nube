@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  # Base de Datos PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: chat_db
+    environment:
+      POSTGRES_USER: chatuser
+      POSTGRES_PASSWORD: chatpass123
+      POSTGRES_DB: chatdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - chat_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatuser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Backend Node.js + Express
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: chat_backend
+    environment:
+      NODE_ENV: production
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: chatuser
+      DB_PASSWORD: chatpass123
+      DB_NAME: chatdb
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - chat_network
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: chat_frontend
+    ports:
+      - "3001:80"
+    networks:
+      - chat_network
+    restart: unless-stopped
+
+  # Proxy Nginx
+  nginx:
+    image: nginx:alpine
+    container_name: chat_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - chat_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  chat_network:
+    driver: bridge
