@@ -18,14 +18,45 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 
-// Configuración de Base de Datos
+// Configuración de Base de Datos con reintentos
 const pool = new Pool({
   user: process.env.DB_USER || 'chatuser',
   password: process.env.DB_PASSWORD || 'chatpass123',
   host: process.env.DB_HOST || 'localhost',
   port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'chatdb'
+  database: process.env.DB_NAME || 'chatdb',
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
 });
+
+// Reintentos de conexión a BD
+let dbConnected = false;
+const connectDB = async () => {
+  let retries = 0;
+  const maxRetries = 30;
+  
+  while (retries < maxRetries && !dbConnected) {
+    try {
+      await pool.query('SELECT 1');
+      dbConnected = true;
+      console.log('✓ Conectado a PostgreSQL');
+      return;
+    } catch (err) {
+      retries++;
+      console.log(`Intento ${retries}/${maxRetries}: Esperando BD...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+  
+  if (!dbConnected) {
+    console.error('✗ No se pudo conectar a la BD después de 30 intentos');
+    process.exit(1);
+  }
+};
+
+// Conectar a BD al iniciar
+connectDB();
 
 // Variables globales
 const connectedUsers = new Map();

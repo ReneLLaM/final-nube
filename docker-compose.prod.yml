@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ============================================================================
   # BASE DE DATOS - PostgreSQL
@@ -11,7 +9,6 @@ services:
       POSTGRES_USER: chatuser
       POSTGRES_PASSWORD: chatpass123
       POSTGRES_DB: chatdb
-      POSTGRES_INITDB_ARGS: "-c max_connections=200"
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -66,7 +63,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
     deploy:
       resources:
         limits:
