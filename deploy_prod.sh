@@ -17,6 +17,9 @@ else
   exit 1
 fi
 
+echo "Deteniendo stack anterior (si existe)..."
+$DOCKER_COMPOSE -f "$COMPOSE_FILE" down --remove-orphans || true
+
 # Cargar configuración de autoscale si existe (para usar MIN_REPLICAS como base)
 BACKEND_REPLICAS=1
 FRONTEND_REPLICAS=1
@@ -35,7 +38,6 @@ $DOCKER_COMPOSE -f "$COMPOSE_FILE" build
 
 echo "Levantando stack en modo producción (backend=$BACKEND_REPLICAS, frontend=$FRONTEND_REPLICAS)..."
 $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d \
-  --remove-orphans \
   --scale backend="$BACKEND_REPLICAS" \
   --scale frontend="$FRONTEND_REPLICAS"
 
