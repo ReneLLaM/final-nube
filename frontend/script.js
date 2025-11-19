@@ -1,8 +1,8 @@
 // Configuración
-const API_URL = window.location.origin;
-const SOCKET_URL = window.location.protocol === 'https:' 
-    ? window.location.origin 
-    : window.location.origin.replace('3001', '3000');
+const API_URL = window.location.hostname === 'localhost'
+    ? 'http://localhost:3000'
+    : window.location.origin;
+const SOCKET_URL = API_URL;
 
 // Variables globales
 let socket = null;
@@ -10,10 +10,13 @@ let currentUser = null;
 let currentRoom = 1;
 let isConnected = false;
 let rooms = [];
+let notifications = new Map(); // Map<roomId, count>
 
 // Elementos del DOM
 const usernameInput = document.getElementById('usernameInput');
-const joinBtn = document.getElementById('joinBtn');
+const passwordInput = document.getElementById('passwordInput');
+const loginBtn = document.getElementById('loginBtn');
+const registerBtn = document.getElementById('registerBtn');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const messageInput = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
@@ -36,7 +39,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Event Listeners
 function setupEventListeners() {
-    joinBtn.addEventListener('click', connectUser);
+    loginBtn.addEventListener('click', () => authenticateUser('login'));
+    registerBtn.addEventListener('click', () => authenticateUser('register'));
     disconnectBtn.addEventListener('click', disconnectUser);
     sendBtn.addEventListener('click', sendMessage);
     document.getElementById('createRoomBtn').addEventListener('click', createNewRoom);
@@ -62,7 +66,7 @@ async function createNewRoom() {
     }
 
     const description = prompt('Descripción (opcional):');
-    
+
     try {
         const response = await fetch(`${API_URL}/api/rooms`, {
             method: 'POST',
@@ -106,7 +110,21 @@ function renderRooms() {
     rooms.forEach(room => {
         const roomItem = document.createElement('div');
         roomItem.className = `room-item ${room.id === currentRoom ? 'active' : ''}`;
-        roomItem.textContent = room.room_name;
+
+        // Crear contenido del item
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = room.room_name;
+        roomItem.appendChild(nameSpan);
+
+        // Badge de notificaciones
+        const count = notifications.get(room.id) || 0;
+        if (count > 0 && room.id !== currentRoom) {
+            const badge = document.createElement('span');
+            badge.className = 'notification-badge';
+            badge.textContent = count > 99 ? '99+' : count;
+            roomItem.appendChild(badge);
+        }
+
         roomItem.addEventListener('click', () => selectRoom(room));
         roomsList.appendChild(roomItem);
     });
@@ -118,9 +136,11 @@ function selectRoom(room) {
     roomTitle.textContent = room.room_name;
     roomDesc.textContent = room.description || 'Sala de chat';
     messagesContainer.innerHTML = '';
+    // Limpiar notificaciones
+    notifications.delete(room.id);
     renderRooms();
     loadMessages();
-    
+
     if (isConnected) {
         socket.emit('user_join', {
             username: currentUser,
@@ -144,68 +164,87 @@ async function loadMessages() {
     }
 }
 
-// Conectar usuario
-async function connectUser() {
+// Autenticar usuario (Login/Registro)
+async function authenticateUser(type) {
     const username = usernameInput.value.trim();
-    
-    if (!username) {
-        showNotification('Por favor ingresa un nombre de usuario', 'error');
+    const password = passwordInput.value.trim();
+
+    if (!username || !password) {
+        showNotification('Usuario y contraseña requeridos', 'error');
         return;
     }
 
-    if (username.length < 3) {
-        showNotification('El nombre debe tener al menos 3 caracteres', 'error');
+    if (password.length < 6) {
+        showNotification('La contraseña debe tener al menos 6 caracteres', 'error');
         return;
     }
 
     try {
-        // Registrar o obtener usuario
-        const userResponse = await fetch(`${API_URL}/api/users`, {
+        const endpoint = type === 'login' ? '/api/login' : '/api/users';
+        const body = type === 'login'
+            ? { username, password }
+            : { username, email: `${username}@chat.local`, password };
+
+        const response = await fetch(`${API_URL}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, email: `${username}@chat.local` })
+            body: JSON.stringify(body)
         });
 
-        if (!userResponse.ok) {
-            throw new Error('Error al registrar usuario');
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Error de autenticación');
         }
 
-        const user = await userResponse.json();
-        currentUser = username;
-        
-        // Inicializar Socket.io
-        if (!socket) {
-            socket = io(SOCKET_URL, {
-                reconnection: true,
-                reconnectionDelay: 1000,
-                reconnectionDelayMax: 5000,
-                reconnectionAttempts: 5
-            });
+        // Guardar token y usuario
+        localStorage.setItem('chat_token', data.token);
+        currentUser = data.user.username;
 
-            setupSocketListeners();
-        }
-
-        // Unirse a la sala
-        socket.emit('user_join', {
-            username: currentUser,
-            roomId: currentRoom
-        });
+        // Conectar socket
+        connectSocket(data.token);
 
         // Actualizar UI
         usernameInput.disabled = true;
-        joinBtn.disabled = true;
+        passwordInput.disabled = true;
+        loginBtn.disabled = true;
+        registerBtn.disabled = true;
         messageInput.disabled = false;
         sendBtn.disabled = false;
         disconnectBtn.style.display = 'block';
         isConnected = true;
         statusSpan.textContent = 'Conectado';
         statusSpan.classList.add('connected');
-        
-        showNotification(`¡Bienvenido ${username}!`, 'success');
+
+        showNotification(`¡Bienvenido ${currentUser}!`, 'success');
+
     } catch (err) {
-        console.error('Error al conectar:', err);
-        showNotification('Error al conectar. Intenta de nuevo.', 'error');
+        console.error('Error de autenticación:', err);
+        showNotification(err.message, 'error');
     }
+}
+
+// Conectar Socket
+function connectSocket(token) {
+    if (!socket) {
+        socket = io(SOCKET_URL, {
+            auth: { token },
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            reconnectionAttempts: 5
+        });
+
+        setupSocketListeners();
+    } else {
+        socket.auth = { token };
+        socket.connect();
+    }
+
+    // Unirse a la sala actual
+    socket.emit('user_join', {
+        roomId: currentRoom
+    });
 }
 
 // Desconectar usuario
@@ -213,28 +252,30 @@ function disconnectUser() {
     if (socket) {
         socket.disconnect();
     }
-    
+
     currentUser = null;
     isConnected = false;
     usernameInput.disabled = false;
-    usernameInput.value = '';
-    joinBtn.disabled = false;
+    passwordInput.disabled = false;
+    passwordInput.value = '';
+    loginBtn.disabled = false;
+    registerBtn.disabled = false;
     messageInput.disabled = true;
     sendBtn.disabled = true;
     disconnectBtn.style.display = 'none';
     statusSpan.textContent = 'Desconectado';
     statusSpan.classList.remove('connected');
     usersList.innerHTML = '<p class="empty-state">Conectate para ver usuarios</p>';
-    
+
     showNotification('Desconectado del chat', 'info');
 }
 
 // Enviar mensaje
 function sendMessage() {
     const message = messageInput.value.trim();
-    
+
     if (!message) return;
-    
+
     if (!socket || !isConnected) {
         showNotification('No estás conectado', 'error');
         return;
@@ -273,8 +314,23 @@ function setupSocketListeners() {
     });
 
     socket.on('receive_message', (data) => {
-        const isOwn = data.username === currentUser;
-        displayMessage(data.username, data.message, data.timestamp, isOwn);
+        // Solo mostrar mensaje si es de la sala actual
+        if (data.roomId === currentRoom) {
+            const isOwn = data.username === currentUser;
+            displayMessage(data.username, data.message, data.timestamp, isOwn);
+        } else {
+            // Incrementar notificación para otra sala
+            const count = notifications.get(data.roomId) || 0;
+            notifications.set(data.roomId, count + 1);
+            renderRooms();
+
+            // Buscar nombre de la sala
+            const room = rooms.find(r => r.id === data.roomId);
+            const roomName = room ? room.room_name : `Sala ${data.roomId}`;
+
+            // Opcional: Sonido de notificación o toast
+            showNotification(`Nuevo mensaje en ${roomName}`, 'info');
+        }
     });
 
     socket.on('users_list', (users) => {
@@ -282,7 +338,9 @@ function setupSocketListeners() {
     });
 
     socket.on('user_typing', (data) => {
-        showTypingIndicator(data.username);
+        if (data.roomId === currentRoom) {
+            showTypingIndicator(data.username);
+        }
     });
 
     socket.on('error', (data) => {
@@ -299,7 +357,7 @@ function setupSocketListeners() {
 function displayMessage(username, message, timestamp, isOwn = false) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${isOwn ? 'own' : 'other'}`;
-    
+
     const time = new Date(timestamp).toLocaleTimeString('es-ES', {
         hour: '2-digit',
         minute: '2-digit'
@@ -335,7 +393,7 @@ function displaySystemMessage(message) {
 function showTypingIndicator(username) {
     typingUser.textContent = `${username} está escribiendo...`;
     typingIndicator.style.display = 'flex';
-    
+
     setTimeout(() => {
         typingIndicator.style.display = 'none';
     }, 3000);
@@ -344,7 +402,7 @@ function showTypingIndicator(username) {
 // Renderizar lista de usuarios
 function renderUsersList(users) {
     usersList.innerHTML = '';
-    
+
     if (users.length === 0) {
         usersList.innerHTML = '<p class="empty-state">No hay usuarios conectados</p>';
         userCount.textContent = '0 usuarios';
@@ -365,7 +423,7 @@ function renderUsersList(users) {
 function showNotification(message, type = 'info') {
     notification.textContent = message;
     notification.className = `notification show ${type}`;
-    
+
     setTimeout(() => {
         notification.classList.remove('show');
     }, 3000);

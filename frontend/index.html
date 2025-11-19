@@ -20,11 +20,21 @@
                 <input 
                     type="text" 
                     id="usernameInput" 
-                    placeholder="Tu nombre de usuario"
+                    placeholder="Usuario"
                     class="username-input"
                     maxlength="30"
                 >
-                <button id="joinBtn" class="join-btn">Conectar</button>
+                <input 
+                    type="password" 
+                    id="passwordInput" 
+                    placeholder="Contraseña"
+                    class="username-input"
+                    style="margin-top: 8px;"
+                >
+                <div class="auth-buttons" style="display: flex; gap: 8px; margin-top: 8px;">
+                    <button id="loginBtn" class="join-btn" style="flex: 1;">Entrar</button>
+                    <button id="registerBtn" class="join-btn" style="flex: 1; background-color: #4b5563;">Registro</button>
+                </div>
             </div>
 
             <div class="rooms-section">

@@ -3,7 +3,11 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
+
+const JWT_SECRET = process.env.JWT_SECRET || 'tu_secreto_super_seguro_para_desarrollo';
 
 const app = express();
 const server = http.createServer(app);
@@ -35,7 +39,7 @@ let dbConnected = false;
 const connectDB = async () => {
   let retries = 0;
   const maxRetries = 30;
-  
+
   while (retries < maxRetries && !dbConnected) {
     try {
       await pool.query('SELECT 1');
@@ -48,7 +52,7 @@ const connectDB = async () => {
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
-  
+
   if (!dbConnected) {
     console.error('✗ No se pudo conectar a la BD después de 30 intentos');
     process.exit(1);
@@ -82,7 +86,7 @@ app.get('/api/rooms', async (req, res) => {
 app.post('/api/rooms', async (req, res) => {
   try {
     const { room_name, description } = req.body;
-    
+
     if (!room_name || room_name.trim() === '') {
       return res.status(400).json({ error: 'Nombre de sala requerido' });
     }
@@ -91,7 +95,7 @@ app.post('/api/rooms', async (req, res) => {
       'INSERT INTO chat_rooms (room_name, description) VALUES ($1, $2) RETURNING id, room_name, description',
       [room_name.trim(), description || 'Sala de chat']
     );
-    
+
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error('Error creating room:', err);
@@ -121,10 +125,14 @@ app.get('/api/messages/:roomId', async (req, res) => {
 // Registrar nuevo usuario
 app.post('/api/users', async (req, res) => {
   try {
-    const { username, email } = req.body;
-    
+    const { username, email, password } = req.body;
+
     if (!username || username.trim() === '') {
       return res.status(400).json({ error: 'Nombre de usuario requerido' });
+    }
+
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
     }
 
     // Verificar si el usuario ya existe
@@ -134,19 +142,77 @@ app.post('/api/users', async (req, res) => {
     );
 
     if (existingUser.rows.length > 0) {
-      return res.json(existingUser.rows[0]);
+      return res.status(400).json({ error: 'El nombre de usuario ya está en uso' });
     }
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
 
     // Crear nuevo usuario
     const result = await pool.query(
       'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email',
-      [username.trim(), email || `${username}@chat.local`, 'temp_hash']
+      [username.trim(), email || `${username}@chat.local`, passwordHash]
     );
-    
-    res.status(201).json(result.rows[0]);
+
+    const user = result.rows[0];
+
+    // Generar token
+    const token = jwt.sign(
+      { id: user.id, username: user.username },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.status(201).json({ user, token });
   } catch (err) {
     console.error('Error creating user:', err);
     res.status(500).json({ error: 'Error creating user' });
+  }
+});
+
+// Login de usuario
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+    }
+
+    // Buscar usuario
+    const result = await pool.query(
+      'SELECT id, username, email, password_hash FROM users WHERE username = $1',
+      [username]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Credenciales inválidas' });
+    }
+
+    const user = result.rows[0];
+
+    // Verificar contraseña
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Credenciales inválidas' });
+    }
+
+    // Generar token
+    const token = jwt.sign(
+      { id: user.id, username: user.username },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      user: { id: user.id, username: user.username, email: user.email },
+      token
+    });
+
+  } catch (err) {
+    console.error('Error en login:', err);
+    res.status(500).json({ error: 'Error en el servidor' });
   }
 });
 
@@ -168,31 +234,33 @@ app.get('/api/rooms/:roomId/users', async (req, res) => {
   }
 });
 
+// Middleware de autenticación para Socket.io
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+
+  if (!token) {
+    return next(new Error('Autenticación requerida'));
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return next(new Error('Token inválido'));
+    }
+    socket.user = decoded;
+    next();
+  });
+});
+
 // Socket.io eventos
 io.on('connection', (socket) => {
-  console.log(`Nuevo usuario conectado: ${socket.id}`);
+  console.log(`Nuevo usuario conectado: ${socket.id} (${socket.user.username})`);
 
   socket.on('user_join', async (data) => {
-    const { username, roomId } = data;
-    
-    try {
-      // Guardar usuario en base de datos si no existe
-      let userId;
-      const userResult = await pool.query(
-        'SELECT id FROM users WHERE username = $1',
-        [username]
-      );
-      
-      if (userResult.rows.length === 0) {
-        const newUserResult = await pool.query(
-          'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id',
-          [username, `${username}@chat.local`, 'temp_hash']
-        );
-        userId = newUserResult.rows[0].id;
-      } else {
-        userId = userResult.rows[0].id;
-      }
+    const { roomId } = data;
+    const username = socket.user.username;
+    const userId = socket.user.id;
 
+    try {
       // Registrar conexión activa
       await pool.query(
         'INSERT INTO active_connections (user_id, socket_id, room_id) VALUES ($1, $2, $3)',
@@ -215,7 +283,7 @@ io.on('connection', (socket) => {
       const usersInRoom = Array.from(connectedUsers.values())
         .filter(u => u.roomId === roomId)
         .map(u => u.username);
-      
+
       io.to(`room_${roomId}`).emit('users_list', usersInRoom);
 
     } catch (err) {
@@ -260,17 +328,18 @@ io.on('connection', (socket) => {
   socket.on('typing', (data) => {
     const { roomId } = data;
     const user = connectedUsers.get(socket.id);
-    
+
     if (user) {
       socket.to(`room_${roomId}`).emit('user_typing', {
-        username: user.username
+        username: user.username,
+        roomId: roomId
       });
     }
   });
 
   socket.on('disconnect', async () => {
     const user = connectedUsers.get(socket.id);
-    
+
     if (user) {
       try {
         // Actualizar registro de desconexión
@@ -289,7 +358,7 @@ io.on('connection', (socket) => {
         const usersInRoom = Array.from(connectedUsers.values())
           .filter(u => u.roomId === user.roomId && u.username !== user.username)
           .map(u => u.username);
-        
+
         io.to(`room_${user.roomId}`).emit('users_list', usersInRoom);
 
       } catch (err) {
